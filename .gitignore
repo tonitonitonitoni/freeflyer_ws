@@ -2,7 +2,6 @@
 build/
 install/
 log/
-backup_feb11/
 
 # colcon cache
 .colcon/
