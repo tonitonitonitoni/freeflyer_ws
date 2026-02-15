@@ -1,0 +1,73 @@
+controller_manager:
+  ros__parameters:
+    update_rate: 50   # 20 ms control loop
+
+    radial_controller:
+      type: radial_controller/RadialController
+    attitude_controller:
+      type: attitude_controller/AttitudeController
+
+
+radial_controller:
+  ros__parameters:
+    use_sim_time: true
+
+    # ----------------------------
+    # Orbit target
+    # ----------------------------
+    target_x: 0.0
+    target_y: 0.0
+
+    # Desired orbit radius
+    r0: 1.2
+
+    k_r: 12.0
+    k_dr: 50.0
+
+    # Tangential speed loop for circular motion (XY only)
+    k_t: 2.6
+    orbit_omega: 0.25
+    orbit_direction: 1.0
+    tangential_force_limit: 1.0
+    tangential_suppress_error: 0.20
+    tangential_outward_gate_error: 0.12
+    tangential_outward_gate_vrad: 0.04
+
+    radial_deadband: 0.005
+    radial_velocity_deadband: 0.01
+
+    vehicle_mass: 15.0
+    centripetal_gain: 1.45
+    thruster_force: 4.0
+
+attitude_controller:
+  ros__parameters:
+    use_sim_time: true
+
+    # Match radial target so attitude is referenced to the same orbit center.
+    target_x: 0.0
+    target_y: 0.0
+
+    # Readiness gates: match the active radial orbit so attitude control is enabled.
+    r0: 1.2
+    v_tan_des: 0.30  # ~= orbit_omega * r0
+    yaw_min_speed_for_control: 0.05
+    attitude_enable_radial_tol: 1.0
+    attitude_enable_vtan_tol: 1.0
+
+    # Yaw + RW bang-bang control.
+    reaction_torque: 0.015
+    k_yaw: 5.0
+    k_yaw_rate: 5.0
+    yaw_deadband: 0.02
+    yaw_on_threshold: 0.10
+    yaw_off_threshold: 0.03
+    yaw_rate_limit: 0.35
+    yaw_rate_error_on_threshold: 0.015
+    yaw_rate_error_off_threshold: 0.005
+    yaw_surface_gain: 0.8
+    yaw_surface_on_threshold: 0.02
+    yaw_surface_off_threshold: 0.004
+    yaw_ref_rate_limit: 0.35
+    use_geometric_yaw_rate: true
+    enable_attitude_control: true

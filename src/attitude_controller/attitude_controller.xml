@@ -1,0 +1,6 @@
+<library path="attitude_controller">
+  <class
+    name="attitude_controller/AttitudeController"
+    type="attitude_controller::AttitudeController"
+    base_class_type="controller_interface::ControllerInterface"/>
+</library>

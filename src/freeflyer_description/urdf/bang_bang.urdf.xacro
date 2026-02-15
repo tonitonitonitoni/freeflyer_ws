@@ -1,0 +1,199 @@
+<?xml version="1.0"?>
+<robot name="bb_freeflyer" xmlns:xacro="http://www.ros.org/wiki/xacro">
+<!-- Parameters -->
+<xacro:property name="mass" value="15.0"/> 
+<xacro:property name="x" value="0.5"/>    <!-- side length -->
+<xacro:property name="Izz" value="${mass/12.0 * (x*x + x*x)}"/>
+
+<link name="base_link">
+    <visual>
+        <geometry>
+            <box size="${x} ${x} 0.75"/>
+        </geometry>
+        <material name = "blue">
+            <color rgba="0.2 0.6 0.9 1"/>
+        </material>
+    </visual>
+
+    <collision>
+        <geometry>
+            <box size="${x} ${x} 0.75"/>
+        </geometry>
+    </collision>
+
+    <inertial>
+        <mass value="${mass}"/>
+        <origin xyz="0 0 0"/>
+        <inertia
+            ixx="0.05"
+            iyy="0.05"
+            izz="${Izz}"
+            ixy="0.0"
+            ixz="0.0"
+            iyz="0.0"/>
+    </inertial>
+</link>
+
+<link name="nose_link">
+    <visual>
+    <geometry> 
+        <box size="0.2 0.05 0.05"/> 
+    </geometry> 
+    <material name="red">
+        <color rgba="0.9 0.2 0.2 1"/>
+    </material>
+</visual>
+</link>
+
+<joint name="nose_joint" type="fixed">
+    <parent link="base_link"/>
+    <child link="nose_link"/>
+    <origin xyz="${x/2 + 0.1} 0 0"/>
+</joint>
+
+<!-- ===================== -->
+<!--          IMU          -->
+<!-- ===================== -->
+<gazebo reference="base_link">
+    <material>Gazebo/Blue</material>
+    <sensor name="imu_sensor" type="imu">
+        <always_on>true</always_on>
+        <update_rate>100.0</update_rate>
+        <visualize>false</visualize>
+        <topic>/imu/data_raw</topic>
+        <imu>
+            <angular_velocity>
+                <x>
+                    <noise type="gaussian">
+                        <mean>0.0</mean>
+                        <stddev>2.0e-4</stddev>
+                    </noise>
+                </x>
+                <y>
+                    <noise type="gaussian">
+                        <mean>0.0</mean>
+                        <stddev>2.0e-4</stddev>
+                    </noise>
+                </y>
+                <z>
+                    <noise type="gaussian">
+                        <mean>0.0</mean>
+                        <stddev>2.0e-4</stddev>
+                    </noise>
+                </z>
+            </angular_velocity>
+            <linear_acceleration>
+                <x>
+                    <noise type="gaussian">
+                        <mean>0.0</mean>
+                        <stddev>2.0e-3</stddev>
+                    </noise>
+                </x>
+                <y>
+                    <noise type="gaussian">
+                        <mean>0.0</mean>
+                        <stddev>2.0e-3</stddev>
+                    </noise>
+                </y>
+                <z>
+                    <noise type="gaussian">
+                        <mean>0.0</mean>
+                        <stddev>2.0e-3</stddev>
+                    </noise>
+                </z>
+            </linear_acceleration>
+        </imu>
+        <plugin name="imu_plugin" filename="libgazebo_ros_imu_sensor.so">
+            <ros>
+                <remapping>~/out:=/imu/data_raw</remapping>
+            </ros>
+            <frame_name>base_link</frame_name>
+        </plugin>
+    </sensor>
+</gazebo>
+
+<gazebo reference="nose_link">
+    <material>Gazebo/Red</material>
+</gazebo>
+
+<!-- ===================== -->
+<!-- Reaction wheel plugin -->
+<!-- ===================== -->
+<gazebo>
+  <plugin name="reaction_wheel" filename="libbang_bang_reaction_wheel.so">
+    <ros_namespace>/freeflyer</ros_namespace>
+    <body_link>base_link</body_link>
+
+    <!-- torque about body Z -->
+    <axis xyz="0 0 1"/>
+    <tau_max>0.05</tau_max>
+
+    <!-- topics relative to namespace -->
+    <topic_cw>reaction_wheel/cw</topic_cw>
+    <topic_ccw>reaction_wheel/ccw</topic_ccw>
+  </plugin>
+</gazebo>
+<!-- ===================== -->
+<!-- Bang-bang thrusters  -->
+<!-- ===================== -->
+
+<!-- +X thruster -->
+<gazebo>
+  <plugin name="thruster_px" filename="libcontinuous_thruster.so">
+    <ros_namespace>/freeflyer</ros_namespace>
+    <body_link>base_link</body_link>
+
+    <application_point xyz="0 0 0"/>
+    <thrust_axis xyz="1 0 0"/>
+    <max_thrust>2.0</max_thrust>
+    <publish_odom>true</publish_odom>
+    <odom_topic>/odom</odom_topic>
+
+    <command_topic>thrusters/px</command_topic>
+  </plugin>
+</gazebo>
+
+<!-- -X thruster -->
+<gazebo>
+  <plugin name="thruster_nx" filename="libcontinuous_thruster.so">
+    <ros_namespace>/freeflyer</ros_namespace>
+    <body_link>base_link</body_link>
+
+    <application_point xyz="0 0 0"/>
+    <thrust_axis xyz="-1 0 0"/>
+    <max_thrust>2.0</max_thrust>
+
+    <command_topic>thrusters/nx</command_topic>
+  </plugin>
+</gazebo>
+
+<!-- +Y thruster -->
+<gazebo>
+  <plugin name="thruster_py" filename="libcontinuous_thruster.so">
+    <ros_namespace>/freeflyer</ros_namespace>
+    <body_link>base_link</body_link>
+
+    <application_point xyz="0 0 0"/>
+    <thrust_axis xyz="0 1 0"/>
+    <max_thrust>2.0</max_thrust>
+
+    <command_topic>thrusters/py</command_topic>
+  </plugin>
+</gazebo>
+
+<!-- -Y thruster -->
+<gazebo>
+  <plugin name="thruster_ny" filename="libcontinuous_thruster.so">
+    <ros_namespace>/freeflyer</ros_namespace>
+    <body_link>base_link</body_link>
+
+    <application_point xyz="0 0 0"/>
+    <thrust_axis xyz="0 -1 0"/>
+    <max_thrust>2.0</max_thrust>
+
+    <command_topic>thrusters/ny</command_topic>
+  </plugin>
+</gazebo>
+
+
+</robot>

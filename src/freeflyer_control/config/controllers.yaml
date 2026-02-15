@@ -1,0 +1,12 @@
+controller_manager:
+  ros__parameters:
+    update_rate: 100
+
+    wrench_to_thrusters:
+      type: freeflyer_control/WrenchThrustersController
+
+wrench_to_thrusters:
+  ros__parameters:
+    fmax: 20.0
+    taumax: 2.0
+    topic: /freeflyer/cmd_wrench

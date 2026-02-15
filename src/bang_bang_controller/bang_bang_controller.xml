@@ -1,0 +1,6 @@
+<library path="bang_bang_circle_controller">
+  <class
+    name="bang_bang_controller/BangBangCircleController"
+    type="bang_bang_controller::BangBangCircleController"
+    base_class_type="controller_interface::ControllerInterface"/>
+</library>

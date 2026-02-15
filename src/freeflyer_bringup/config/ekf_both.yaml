@@ -1,0 +1,36 @@
+/freeflyer/ekf_filter_node:
+  ros__parameters:
+    frequency: 50.0
+    two_d_mode: true
+    publish_tf: true
+    sensor_timeout: 0.2
+
+    map_frame: map
+    odom_frame: odom
+    base_link_frame: base_link
+    world_frame: odom
+
+    # ---------- IMU prediction ----------
+    imu0: /imu/data_raw
+    imu0_config: [false,false,false,
+                  false,false,false,
+                  false,false,false,
+                  false,false,true,
+                  true,true,false]
+    imu0_remove_gravitational_acceleration: true
+
+    # ---------- Absolute XY ----------
+    pose0: /localization/xy
+    pose0_config: [true,true,false,
+                   false,false,false,
+                   false,false,false,
+                   false,false,false,
+                   false,false,false]
+
+    # ---------- Absolute Yaw ----------
+    pose1: /localization/yaw
+    pose1_config: [false,false,false,
+                   false,false,true,
+                   false,false,false,
+                   false,false,false,
+                   false,false,false]
