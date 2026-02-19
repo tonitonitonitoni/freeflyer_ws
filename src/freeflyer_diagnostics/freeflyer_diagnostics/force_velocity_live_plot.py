@@ -18,6 +18,12 @@ if "MPLBACKEND" not in os.environ:
 
 import matplotlib.pyplot as plt
 
+"""force_velocity_plot = Node(
+        package="freeflyer_diagnostics",
+        executable="force_velocity_live_plot",
+        name="force_velocity_live_plot",
+        output="screen",
+    )"""
 
 class ForceVelocityLivePlot(Node):
     def __init__(self):
@@ -32,13 +38,13 @@ class ForceVelocityLivePlot(Node):
         self.last_wz = None
         self.last_state_time = None
 
-        # Thruster commands in [0, 1]
-        self.px_cmd = 0.0
-        self.nx_cmd = 0.0
-        self.py_cmd = 0.0
-        self.ny_cmd = 0.0
-        self.rw_cw_cmd = False
-        self.rw_ccw_cmd = False
+        # Thruster commands in (True, False)
+        self.px_cmd = False
+        self.nx_cmd = False
+        self.py_cmd = False
+        self.ny_cmd = False
+        # RW is a float
+        self.rw_cmd = 0.0
 
         self.t0 = time.time()
 
@@ -49,23 +55,21 @@ class ForceVelocityLivePlot(Node):
         self.vy = deque(maxlen=self.history_size)
         self.ax = deque(maxlen=self.history_size)
         self.ay = deque(maxlen=self.history_size)
-        self.rw_cw = deque(maxlen=self.history_size)
-        self.rw_ccw = deque(maxlen=self.history_size)
+        self.rw_cmd_hist = deque(maxlen=self.history_size)
         self.wz = deque(maxlen=self.history_size)
         self.az = deque(maxlen=self.history_size)
 
         # --- Subscriptions ---
-        self.create_subscription(Float32, "/freeflyer/thrusters/px", self.cb_px, 10)
-        self.create_subscription(Float32, "/freeflyer/thrusters/nx", self.cb_nx, 10)
-        self.create_subscription(Float32, "/freeflyer/thrusters/py", self.cb_py, 10)
-        self.create_subscription(Float32, "/freeflyer/thrusters/ny", self.cb_ny, 10)
-        self.create_subscription(Bool, "/freeflyer/reaction_wheel/cw", self.cb_rw_cw, 10)
-        self.create_subscription(Bool, "/freeflyer/reaction_wheel/ccw", self.cb_rw_ccw, 10)
+        self.create_subscription(Bool, "/freeflyer/thrusters/px", self.cb_px, 10)
+        self.create_subscription(Bool, "/freeflyer/thrusters/nx", self.cb_nx, 10)
+        self.create_subscription(Bool, "/freeflyer/thrusters/py", self.cb_py, 10)
+        self.create_subscription(Bool, "/freeflyer/thrusters/ny", self.cb_ny, 10)
+        self.create_subscription(Float32, "/freeflyer/reaction_wheel/cmd", self.cb_rw_cmd, 10)
 
         # ONLY correct state source
-        self.create_subscription(Odometry, "/freeflyer/thruster_odom", self.cb_odom, 10)
+        self.create_subscription(Odometry, "/freeflyer/odometry/filtered", self.cb_odom, 10)
 
-        self.get_logger().info("Listening to /freeflyer/thruster_odom + thruster topics")
+        self.get_logger().info("Listening to /freeflyer/odometry/filtered")
 
         # --- Plot setup ---
         plt.ion()
@@ -97,10 +101,9 @@ class ForceVelocityLivePlot(Node):
         self.ax_acc.grid(True)
         self.ax_acc.legend()
 
-        self.line_rw_cw, = self.ax_rw.plot([], [], label="rw_cw", linewidth=1.8, drawstyle="steps-post")
-        self.line_rw_ccw, = self.ax_rw.plot([], [], label="rw_ccw", linewidth=1.8, drawstyle="steps-post")
+        self.line_rw, = self.ax_rw.plot([], [], label="rw_cmd", linewidth=1.8)
         self.ax_rw.set_ylabel("RW Cmd")
-        self.ax_rw.set_ylim(-0.1, 1.1)
+        self.ax_rw.set_ylim(-1.1, 1.1)
         self.ax_rw.grid(True)
         self.ax_rw.legend()
 
@@ -121,16 +124,17 @@ class ForceVelocityLivePlot(Node):
 
         self.create_timer(0.05, self.update_plot)
         self.create_timer(2.0, self.watchdog)
+        
 
     # ---------------- Thruster callbacks ----------------
 
-    def cb_px(self, msg): self.px_cmd = float(msg.data)
-    def cb_nx(self, msg): self.nx_cmd = float(msg.data)
-    def cb_py(self, msg): self.py_cmd = float(msg.data)
-    def cb_ny(self, msg): self.ny_cmd = float(msg.data)
-    def cb_rw_cw(self, msg): self.rw_cw_cmd = bool(msg.data)
-    def cb_rw_ccw(self, msg): self.rw_ccw_cmd = bool(msg.data)
-
+    def cb_px(self, msg): self.px_cmd = 1.0 if msg.data else 0.0
+    def cb_nx(self, msg): self.nx_cmd = 1.0 if msg.data else 0.0
+    def cb_py(self, msg): self.py_cmd = 1.0 if msg.data else 0.0
+    def cb_ny(self, msg): self.ny_cmd = 1.0 if msg.data else 0.0
+    def cb_rw_cmd(self, msg):
+        self.rw_cmd = float(msg.data)
+        
     # ---------------- Odom callback ----------------
 
     def cb_odom(self, msg):
@@ -138,6 +142,7 @@ class ForceVelocityLivePlot(Node):
         vy = msg.twist.twist.linear.y
         wz = msg.twist.twist.angular.z
         self.push_state(vx, vy, wz)
+       
 
     # ---------------- Data logic ----------------
 
@@ -168,8 +173,7 @@ class ForceVelocityLivePlot(Node):
         self.vy.append(vy)
         self.ax.append(ax)
         self.ay.append(ay)
-        self.rw_cw.append(1.0 if self.rw_cw_cmd else 0.0)
-        self.rw_ccw.append(1.0 if self.rw_ccw_cmd else 0.0)
+        self.rw_cmd_hist.append(self.rw_cmd)
         self.wz.append(wz)
         self.az.append(az)
 
@@ -181,7 +185,7 @@ class ForceVelocityLivePlot(Node):
                 name for name, types in self.get_topic_names_and_types()
                 if "nav_msgs/msg/Odometry" in types
             ]
-            self.get_logger().warn(f"No state yet. Odometry topics detected: {pubs}")
+            # self.get_logger().warn(f"No state yet. Odometry topics detected: {pubs}")
 
     # ---------------- Plot ----------------
 
@@ -195,8 +199,7 @@ class ForceVelocityLivePlot(Node):
         self.line_vy.set_data(self.t, self.vy)
         self.line_ax.set_data(self.t, self.ax)
         self.line_ay.set_data(self.t, self.ay)
-        self.line_rw_cw.set_data(self.t, self.rw_cw)
-        self.line_rw_ccw.set_data(self.t, self.rw_ccw)
+        self.line_rw.set_data(self.t, self.rw_cmd_hist)
         self.line_wz.set_data(self.t, self.wz)
         self.line_az.set_data(self.t, self.az)
 

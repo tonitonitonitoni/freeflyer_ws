@@ -3,7 +3,7 @@ from setuptools import find_packages, setup
 package_name = 'freeflyer_testing'
 node_names = [
     'rw_alpha',
-    'esc_thrust_sweep',
+    'keyboard_teleop',
     'imu_accel_plot',
 ]
 

@@ -3,6 +3,9 @@ build/
 install/
 log/
 
+# Legacy code files 
+legacy/
+
 # colcon cache
 .colcon/
 

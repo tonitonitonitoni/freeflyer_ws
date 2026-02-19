@@ -2,11 +2,10 @@ from setuptools import find_packages, setup
 
 package_name = 'freeflyer_control'
 
-node_names = ['bang_bang_rw_controller',
-              'bang_bang_keyboard',
-              'thruster_rw_odom_predictor',
+node_names = ['serial_bridge',
               'gazebo_to_pose',
               'path_publisher',
+              'bang_bang_circle_controller',
               ]
 setup(
     name=package_name,

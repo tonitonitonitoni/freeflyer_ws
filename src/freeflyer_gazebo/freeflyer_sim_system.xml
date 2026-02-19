@@ -1,6 +1,0 @@
-<library path="freeflyer_sim_system">
-  <class
-    name="freeflyer_sim_system/FreeflyerSimSystem"
-    type="freeflyer_sim_system::FreeflyerSimSystem"
-    base_class_type="gazebo_ros2_control::GazeboSystemInterface"/>
-</library>

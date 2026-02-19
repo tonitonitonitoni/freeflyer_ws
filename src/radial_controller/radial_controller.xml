@@ -1,6 +1,0 @@
-<library path="radial_controller">
-  <class
-    name="radial_controller/RadialController"
-    type="radial_controller::RadialController"
-    base_class_type="controller_interface::ControllerInterface"/>
-</library>

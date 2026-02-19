@@ -2,8 +2,9 @@
 
 import rclpy
 from rclpy.node import Node
-from std_msgs.msg import Float32, Float32MultiArray, Bool
+from std_msgs.msg import Float32MultiArray, Bool
 import serial
+
 
 class SerialBridge(Node):
 
@@ -22,18 +23,18 @@ class SerialBridge(Node):
         self.ser = serial.Serial(port, baudrate, timeout=0.01)
         self.get_logger().info(f"Opened serial {port} @ {baudrate}")
 
-        # ---------------- Command State ----------------
-        self.cmd_px = 0.0
-        self.cmd_nx = 0.0
-        self.cmd_py = 0.0
-        self.cmd_ny = 0.0
-        self.cmd_rw = 0
+        # ---------------- Command State (Booleans) ----------------
+        self.cmd_px = False
+        self.cmd_nx = False
+        self.cmd_py = False
+        self.cmd_ny = False
+        self.cmd_rw = 0  # -1, 0, 1
 
         # ---------------- Subscriptions ----------------
-        self.create_subscription(Float32, "/freeflyer/thrusters/px", self._cb_px, 10)
-        self.create_subscription(Float32, "/freeflyer/thrusters/nx", self._cb_nx, 10)
-        self.create_subscription(Float32, "/freeflyer/thrusters/py", self._cb_py, 10)
-        self.create_subscription(Float32, "/freeflyer/thrusters/ny", self._cb_ny, 10)
+        self.create_subscription(Bool, "/freeflyer/thrusters/px", self._cb_px, 10)
+        self.create_subscription(Bool, "/freeflyer/thrusters/nx", self._cb_nx, 10)
+        self.create_subscription(Bool, "/freeflyer/thrusters/py", self._cb_py, 10)
+        self.create_subscription(Bool, "/freeflyer/thrusters/ny", self._cb_ny, 10)
 
         self.create_subscription(Bool, "/freeflyer/reaction_wheel/cw", self._cb_rw_cw, 10)
         self.create_subscription(Bool, "/freeflyer/reaction_wheel/ccw", self._cb_rw_ccw, 10)
@@ -55,30 +56,35 @@ class SerialBridge(Node):
     # -------------------------------------------------
     # Callbacks
     # -------------------------------------------------
-    def _clamp(self, v):
-        return max(0.0, min(1.0, v))
 
     def _cb_px(self, msg):
-        self.cmd_px = self._clamp(msg.data)
+        self.cmd_px = msg.data
 
     def _cb_nx(self, msg):
-        self.cmd_nx = self._clamp(msg.data)
+        self.cmd_nx = msg.data
 
     def _cb_py(self, msg):
-        self.cmd_py = self._clamp(msg.data)
+        self.cmd_py = msg.data
 
     def _cb_ny(self, msg):
-        self.cmd_ny = self._clamp(msg.data)
+        self.cmd_ny = msg.data
 
     def _cb_rw_cw(self, msg):
-        self.cmd_rw = -1 if msg.data else 0
+        if msg.data:
+            self.cmd_rw = -1
+        elif self.cmd_rw == -1:
+            self.cmd_rw = 0
 
     def _cb_rw_ccw(self, msg):
-        self.cmd_rw = 1 if msg.data else 0
+        if msg.data:
+            self.cmd_rw = 1
+        elif self.cmd_rw == 1:
+            self.cmd_rw = 0
 
     # -------------------------------------------------
-    # Send Combined Command
+    # Telemetry Parsing
     # -------------------------------------------------
+
     def _parse_and_publish_tel(self, line: str):
         if not line.startswith("$TEL,"):
             return
@@ -90,17 +96,21 @@ class SerialBridge(Node):
         try:
             packet = float(parts[1])
             last_rx = float(parts[2])
-            pwm_fwd = float(parts[3])
-            pwm_rev = float(parts[4])
-            pwm_lft = float(parts[5])
-            pwm_rgt = float(parts[6])
+
+            # These are booleans coming back as 0/1
+            fwd = float(parts[3])
+            rev = float(parts[4])
+            lft = float(parts[5])
+            rgt = float(parts[6])
             rw_state = float(parts[7])
             watchdog = float(parts[8])
+
         except ValueError:
             return
 
-        self._actuators_msg.data = [pwm_fwd, pwm_rev, pwm_lft, pwm_rgt, rw_state]
+        self._actuators_msg.data = [fwd, rev, lft, rgt, rw_state]
         self._diagnostics_msg.data = [packet, last_rx, watchdog]
+
         self.actuators_pub.publish(self._actuators_msg)
         self.diagnostics_pub.publish(self._diagnostics_msg)
 
@@ -110,25 +120,30 @@ class SerialBridge(Node):
             return
 
         self._rx_buf.extend(self.ser.read(waiting))
+
         while True:
             nl = self._rx_buf.find(b"\n")
             if nl < 0:
                 break
+
             line = self._rx_buf[:nl].decode("ascii", errors="ignore")
             del self._rx_buf[:nl + 1]
             self._parse_and_publish_tel(line)
 
+    # -------------------------------------------------
+    # Send Combined Command
+    # -------------------------------------------------
+
     def send_command(self):
 
-        # Map to Arduino ordering:
-        # fwd, rev, lft, rgt
-        fwd = self.cmd_px
-        rev = self.cmd_nx
-        lft = self.cmd_py
-        rgt = self.cmd_ny
-        rw = self.cmd_rw 
+        # Convert booleans to 0/1 integers
+        fwd = 1 if self.cmd_px else 0
+        rev = 1 if self.cmd_nx else 0
+        lft = 1 if self.cmd_py else 0
+        rgt = 1 if self.cmd_ny else 0
+        rw = self.cmd_rw
 
-        cmd_line = f"$CMD,{fwd:.3f},{rev:.3f},{lft:.3f},{rgt:.3f},{rw}\n"
+        cmd_line = f"$CMD,{fwd},{rev},{lft},{rgt},{rw}\n"
 
         try:
             self.ser.write(cmd_line.encode())
