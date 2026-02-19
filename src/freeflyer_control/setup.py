@@ -6,6 +6,7 @@ node_names = ['serial_bridge',
               'gazebo_to_pose',
               'path_publisher',
               'bang_bang_circle_controller',
+              'bang_bang_radial_controller',
               ]
 setup(
     name=package_name,

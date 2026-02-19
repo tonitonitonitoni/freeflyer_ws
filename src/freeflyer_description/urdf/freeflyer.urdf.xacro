@@ -8,7 +8,7 @@
              params="
                id
                axis_xyz
-               max_thrust:=2.0
+               max_thrust:=1.0
                spool_tau:=0.1
                body_link:=base_link
                ros_ns:=/freeflyer
@@ -135,6 +135,7 @@
                 <remapping>~/out:=/imu/data_raw</remapping>
             </ros>
             <frame_name>base_link</frame_name>
+            <initial_orientation_as_reference>false</initial_orientation_as_reference>
         </plugin>
     </sensor>
 </gazebo>

@@ -41,10 +41,11 @@ def generate_launch_description():
         prefix="xterm -fa 'Monospace' -fs 10 -hold -e",
     )
 
-    circle_controller = Node(
+    radial_controller = Node(
         package="freeflyer_control",
-        executable="bang_bang_circle_controller",
-        name="bang_bang_circle_controller",
+        executable="bang_bang_radial_controller",
+        name="bang_bang_radial_controller",
+        parameters=[{"thruster_force": 0.5}],
         output="screen",
     )
 
@@ -69,6 +70,6 @@ def generate_launch_description():
         rsp,
         ekf,
         #keyboard_controller,
-        circle_controller,
+        radial_controller,
         diagnostics_launch,
     ])

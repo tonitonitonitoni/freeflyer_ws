@@ -7,48 +7,72 @@ from rclpy.node import Node
 from std_msgs.msg import Bool, Float64
 
 
+
+class params:
+    # Geometry / targets
+    r0 = 1.5
+    target_x = 0.0
+    target_y = 0.0
+    min_orbit_radius = 1e-3
+
+    # Node timing
+    control_period = 0.01  # 100 Hz (unrealistic)
+    pwm_period = 0.01
+
+    # Bang-bang / actuator shaping
+    deadband_force = 0.05
+    force_hyst_on = 0.05
+    force_hyst_off = 0.02
+    min_thruster_force = 1e-6
+
+    # Radial controller
+    radial_error_to_v_gain = 0.9
+    radial_velocity_limit = 0.14
+    radial_velocity_gain_scale = 0.80
+    radial_wall_guard_error = 0.35
+    radial_wall_brake_force_scale = 0.55
+    radial_settle_error = 0.06
+    radial_settle_vrad = 0.05
+    radial_damping_error_band = 0.50
+    radial_near_kp_scale = 0.12
+    radial_near_kd_scale = 0.70
+
+    # Tangential controller
+    tangential_gate_on = 0.12
+    tangential_gate_off = 0.20
+    tangential_radial_gate_on = 0.10
+    tangential_radial_gate_off = 0.18
+    tangential_vrad_gate_on = 0.10
+    tangential_vrad_gate_off = 0.16
+    tangential_boundary_layer = 0.08
+    tangential_gain_scale = 0.5
+    tangential_force_limit_scale = 0.5
+
+    # PWM authority cap to reduce slam into the wall during transients.
+    max_axis_duty = 0.25
+    min_pulse_width = 0.02      # 20 ms realistic valve open time
+    min_pulse_gap = 0.02        # keep anti-chatter without starving actuation
+    impulse_leak = 0.995
+    max_impulse_pulses = 3.0
+
+
+
 class BangBangCircleController(Node):
     def __init__(self):
         super().__init__("bang_bang_circle_controller")
 
-        self.declare_parameter("r0", 1.5)
         self.declare_parameter("v_tan_des", 0.3)
-        self.declare_parameter("k_r", 1.0)
-        self.declare_parameter("k_dr", 4.0)
-        self.declare_parameter("k_t", 8.0)
-        self.declare_parameter("radial_error_sat", 0.5)     # [m]
-        self.declare_parameter("radial_vel_sat", 1.0)       # [m/s]
-        self.declare_parameter("capture_radius", 0.5)       # [m] outside r0
-        self.declare_parameter("force_hysteresis", 0.05)    # [N]
-        self.declare_parameter("force_off_threshold", 0.02) # [N]
+        # Match simulated thruster max_thrust default in freeflyer.urdf.xacro.
+        self.declare_parameter("thruster_force", 2.0)
 
-        # Bang-bang conversion params.
-        self.declare_parameter("thruster_force", 1.0)   # [N], per axis thruster max
-        self.declare_parameter("pwm_period", 0.01)       # [s]
-        self.declare_parameter("deadband_force", 0.05)  # [N]
-
-        self.r0 = float(self.get_parameter("r0").value)
         self.v_tan_des = float(self.get_parameter("v_tan_des").value)
-        self.k_r = float(self.get_parameter("k_r").value)
-        self.k_dr = float(self.get_parameter("k_dr").value)
-        self.k_t = float(self.get_parameter("k_t").value)
-
-        self.thruster_force = max(1e-6, float(self.get_parameter("thruster_force").value))
-        self.pwm_period = max(1e-3, float(self.get_parameter("pwm_period").value))
-        self.deadband_force = max(0.0, float(self.get_parameter("deadband_force").value))
-        self.radial_error_sat = float(self.get_parameter("radial_error_sat").value)
-        self.radial_vel_sat   = float(self.get_parameter("radial_vel_sat").value)
-        self.capture_radius   = float(self.get_parameter("capture_radius").value)
-        self.force_hyst_on    = float(self.get_parameter("force_hysteresis").value)
-        self.force_hyst_off   = float(self.get_parameter("force_off_threshold").value)
+        self.thruster_force = max(
+            params.min_thruster_force, float(self.get_parameter("thruster_force").value)
+        )
 
         self.state_ready = False
+        self.tan_enabled = False
 
-        self.target_x = 0.0
-        self.target_y = 0.0
-        self.velocity_threshold = 0.2
-        self.fx_cmd = 0.0
-        self.fy_cmd = 0.0
         self.current_rx = 0.0
         self.current_ry = 0.0
         self.current_r  = 0.0
@@ -61,6 +85,16 @@ class BangBangCircleController(Node):
         self.current_cos_yaw = 1.0
         self.current_sin_yaw = 0.0
 
+        self.imp_x = 0.0
+        self.imp_y = 0.0
+
+        self.pulse_x_time = 0.0
+        self.pulse_y_time = 0.0
+        self.pulse_x_gap_time = 0.0
+        self.pulse_y_gap_time = 0.0
+        self.pulse_x_dir = 0
+        self.pulse_y_dir = 0
+        self.in_damping_band_prev = False
 
         self.create_subscription(Odometry, "/freeflyer/odometry/filtered", self.odom_cb, 10)
 
@@ -78,7 +112,7 @@ class BangBangCircleController(Node):
         self.last_ny = False
 
         self.t0 = self.get_clock().now()
-        self.create_timer(0.02, self.control_tick)  # 50 Hz
+        self.create_timer(params.control_period, self.control_tick)
 
     def odom_cb(self, msg: Odometry):
         x = msg.pose.pose.position.x
@@ -92,10 +126,10 @@ class BangBangCircleController(Node):
             1.0 - 2.0 * (q.y * q.y + q.z * q.z),
         )
 
-        rx = x - self.target_x
-        ry = y - self.target_y
+        rx = x - params.target_x
+        ry = y - params.target_y
         r = math.hypot(rx, ry)
-        if r < 1e-3:
+        if r < params.min_orbit_radius:
             # Initialize a valid local frame at the orbit center so control can start from rest.
             c = math.cos(yaw)
             s = math.sin(yaw)
@@ -113,11 +147,11 @@ class BangBangCircleController(Node):
             self.state_ready = True
 
             msg_err = Float64()
-            msg_err.data = -self.r0
+            msg_err.data = -params.r0
             self.radial_err_pub.publish(msg_err)
             return
 
-        radial_error = r - self.r0
+        radial_error = r - params.r0
         msg_err = Float64()
         msg_err.data = radial_error
         self.radial_err_pub.publish(msg_err)
@@ -148,7 +182,6 @@ class BangBangCircleController(Node):
         self.state_ready = True
 
     def control_tick(self):
-
         if not self.state_ready:
             return
 
@@ -156,32 +189,89 @@ class BangBangCircleController(Node):
         r = self.current_r
         v_rad = self.current_v_rad
         v_tan = self.current_v_tan
+        radial_error = r - params.r0
+        thruster_force = self.thruster_force
+        in_damping_band = abs(radial_error) < params.radial_damping_error_band
 
-        radial_error = r - self.r0
+        # On entry to damping band, clear active pulse timers/directions.
+        if in_damping_band and not self.in_damping_band_prev:
+            self.pulse_x_time = 0.0
+            self.pulse_y_time = 0.0
+            self.pulse_x_dir = 0
+            self.pulse_y_dir = 0
 
-        # --- Sliding surface parameters ---
-        lam = 2.0
-        eps_r = 0.2     # radial boundary layer
-        eps_t = 0.1     # tangential boundary layer
+        # ---------------------------
+        # 1) Radial velocity-governed command
+        # ---------------------------
+        v_rad_des = -params.radial_error_to_v_gain * radial_error
+        v_rad_des = max(-params.radial_velocity_limit, min(params.radial_velocity_limit, v_rad_des))
+        k_vr = (
+            params.radial_velocity_gain_scale
+            * thruster_force
+            / max(params.radial_velocity_limit, params.min_thruster_force)
+        )
+        f_r = k_vr * (v_rad_des - v_rad)
+        f_r = max(-thruster_force, min(thruster_force, f_r))
 
-        def sat(x):
-            return max(-1.0, min(1.0, x))
+        # Near-orbit damping mode to dissipate oscillations from pulse quantization.
+        if in_damping_band:
+            k_near_p = (
+                params.radial_near_kp_scale
+                * thruster_force
+                / max(params.radial_damping_error_band, params.min_thruster_force)
+            )
+            k_near_d = (
+                params.radial_near_kd_scale
+                * thruster_force
+                / max(params.radial_settle_vrad, params.min_thruster_force)
+            )
+            f_r = -(k_near_p * radial_error + k_near_d * v_rad)
+            f_r = max(-thruster_force, min(thruster_force, f_r))
 
-        # --- Continuous sliding surface radial force ---
-        s_r = v_rad + lam * radial_error
-        f_r = -self.thruster_force * sat(s_r / eps_r)
+        # Hard wall guards: if already far out and still moving outward, force braking inward.
+        if radial_error > params.radial_wall_guard_error and v_rad > 0.0:
+            f_r = min(f_r, -params.radial_wall_brake_force_scale * thruster_force)
+        if radial_error < -params.radial_wall_guard_error and v_rad < 0.0:
+            f_r = max(f_r, params.radial_wall_brake_force_scale * thruster_force)
 
-        # --- Capture mode ---
-        capture_mode = abs(radial_error) > self.capture_radius or abs(v_rad) > self.velocity_threshold
-
-
-        if capture_mode:
-            f_t = 0.0
+        # ------------------------------------------
+        # 3) Tangential control gating
+        #    Enable only when both the radial surface and radial error are small.
+        # ------------------------------------------
+        s_r = v_rad + params.radial_error_to_v_gain * radial_error
+        if not in_damping_band:
+            self.tan_enabled = False
+        elif self.tan_enabled:
+            if (
+                abs(s_r) > params.tangential_gate_off
+                or abs(radial_error) > params.tangential_radial_gate_off
+                or abs(v_rad) > params.tangential_vrad_gate_off
+            ):
+                self.tan_enabled = False
         else:
-            v_err = self.v_tan_des - v_tan
-            f_t = self.thruster_force * sat(v_err / eps_t)
+            if (
+                abs(s_r) < params.tangential_gate_on
+                and abs(radial_error) < params.tangential_radial_gate_on
+                and abs(v_rad) < params.tangential_vrad_gate_on
+            ):
+                self.tan_enabled = True
 
-        # --- Convert (f_r, f_t) to WORLD frame ---
+        if self.tan_enabled:
+            v_err = self.v_tan_des - v_tan
+            k_vt = (
+                params.tangential_gain_scale
+                * thruster_force
+                / max(params.tangential_boundary_layer, params.min_thruster_force)
+            )
+            f_t = k_vt * v_err
+            tangential_force_limit = params.tangential_force_limit_scale * thruster_force
+            f_t = max(-tangential_force_limit, min(tangential_force_limit, f_t))
+        else:
+            f_t = 0.0
+
+        # ------------------------------------------
+        # 4) (f_r, f_t) -> world -> body
+        # ------------------------------------------
         r_hat_x = self.current_r_hat_x
         r_hat_y = self.current_r_hat_y
         t_hat_x = self.current_t_hat_x
@@ -190,43 +280,101 @@ class BangBangCircleController(Node):
         fx_w = f_r * r_hat_x + f_t * t_hat_x
         fy_w = f_r * r_hat_y + f_t * t_hat_y
 
-        # --- Rotate WORLD -> BODY frame ---
+        # WORLD -> BODY
         c = self.current_cos_yaw
         s = self.current_sin_yaw
-
         fx_b = c * fx_w + s * fy_w
         fy_b = -s * fx_w + c * fy_w
 
-        # --- PWM duty from continuous force ---
-        duty_x = min(1.0, abs(fx_b) / self.thruster_force)
-        duty_y = min(1.0, abs(fy_b) / self.thruster_force)
+        # Hard cap body-axis requested force to limit injected impulse per cycle.
+        axis_force_cap = params.max_axis_duty * thruster_force
+        fx_b = max(-axis_force_cap, min(axis_force_cap, fx_b))
+        fy_b = max(-axis_force_cap, min(axis_force_cap, fy_b))
 
-        now = self.get_clock().now()
-        t = (now - self.t0).nanoseconds * 1e-9
-        phase = t % self.pwm_period
+        # ------------------------------------------
+        # 5) Pulse scheduling via impulse accumulator
+        # ------------------------------------------
 
-        x_active = duty_x > 0.01 and phase < duty_x * self.pwm_period
-        y_active = duty_y > 0.01 and phase < duty_y * self.pwm_period
+        # Near orbit: clear residual queued impulse, but do not disable control.
+        if abs(radial_error) < params.radial_settle_error and abs(v_rad) < params.radial_settle_vrad:
+            self.imp_x = 0.0
+            self.imp_y = 0.0
 
-        # --- Hysteresis ---
-        def hysteresis(active, last, force):
-            if last:
-                return active and abs(force) > self.force_hyst_off
-            else:
-                return active and abs(force) > self.force_hyst_on
+        dt = params.control_period
+        Fmax = thruster_force
+        I_pulse = Fmax * params.min_pulse_width
+        I_cap = params.max_impulse_pulses * I_pulse
 
+        # --- Accumulate desired impulse ---
+        self.imp_x += fx_b * dt
+        self.imp_y += fy_b * dt
+        self.imp_x = max(-I_cap, min(I_cap, self.imp_x))
+        self.imp_y = max(-I_cap, min(I_cap, self.imp_y))
 
-        px = hysteresis(x_active and fx_b > 0.0, self.last_px, fx_b)
-        nx = hysteresis(x_active and fx_b < 0.0, self.last_nx, fx_b)
-        py = hysteresis(y_active and fy_b > 0.0, self.last_py, fy_b)
-        ny = hysteresis(y_active and fy_b < 0.0, self.last_ny, fy_b)
+        # --- Handle active pulse timers ---
+        px = nx = py = ny = False
+        self.pulse_x_gap_time = max(0.0, self.pulse_x_gap_time - dt)
+        self.pulse_y_gap_time = max(0.0, self.pulse_y_gap_time - dt)
+
+        # X axis pulse timing (direction latched when pulse starts)
+        if self.pulse_x_time > 0.0:
+            self.pulse_x_time -= dt
+            if self.pulse_x_dir > 0:
+                px = True
+            elif self.pulse_x_dir < 0:
+                nx = True
+        else:
+            # No active pulse: check if enough impulse accumulated
+            if self.pulse_x_gap_time <= 0.0 and abs(self.imp_x) >= I_pulse:
+                if self.imp_x > 0.0:
+                    self.pulse_x_dir = 1
+                    px = True
+                    self.imp_x -= I_pulse
+                else:
+                    self.pulse_x_dir = -1
+                    nx = True
+                    self.imp_x += I_pulse
+
+                self.pulse_x_time = params.min_pulse_width
+                self.pulse_x_gap_time = params.min_pulse_gap
+
+        # Y axis pulse timing (direction latched when pulse starts)
+        if self.pulse_y_time > 0.0:
+            self.pulse_y_time -= dt
+            if self.pulse_y_dir > 0:
+                py = True
+            elif self.pulse_y_dir < 0:
+                ny = True
+        else:
+            if self.pulse_y_gap_time <= 0.0 and abs(self.imp_y) >= I_pulse:
+                if self.imp_y > 0.0:
+                    self.pulse_y_dir = 1
+                    py = True
+                    self.imp_y -= I_pulse
+                else:
+                    self.pulse_y_dir = -1
+                    ny = True
+                    self.imp_y += I_pulse
+
+                self.pulse_y_time = params.min_pulse_width
+                self.pulse_y_gap_time = params.min_pulse_gap
+                
+        self.imp_x *= params.impulse_leak
+        self.imp_y *= params.impulse_leak
+        # Never fire both on same axis
+        if px and nx:
+            px = nx = False
+        if py and ny:
+            py = ny = False
 
         self.publish_thrusters(px, nx, py, ny)
+
 
         self.last_px = px
         self.last_nx = nx
         self.last_py = py
         self.last_ny = ny
+        self.in_damping_band_prev = in_damping_band
 
 
     def publish_thrusters(self, px: bool, nx: bool, py: bool, ny: bool):
